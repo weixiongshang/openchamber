@@ -35,9 +35,11 @@ const attachedContextOfShortFirstMessage = (messages) => {
 /** Whether OpenCode's catalog prices this Zen model at zero. Free Zen models do not all end in -free (big-pickle). */
 const isFreeZenModel = async (ctx, model) => {
   if (model?.providerID !== "opencode") return false
-  const catalog = await ctx.model.list().then((result) => result.data, () => [])
-  const info = catalog.find((entry) => entry.providerID === model.providerID && entry.id === model.id)
-  return Boolean(info?.cost?.length) && info.cost.every((tier) => tier.input === 0 && tier.output === 0)
+  const catalog = await ctx.model.list().then((result) => result.data, () => undefined)
+  const info = catalog?.find((entry) => entry.providerID === model.providerID && entry.id === model.id)
+  // No price to go by (a failed read, or a model the list leaves out): the -free suffix still marks a free model.
+  if (!info?.cost?.length) return model.id.endsWith("-free")
+  return info.cost.every((tier) => tier.input === 0 && tier.output === 0)
 }
 
 export default {
@@ -53,6 +55,9 @@ export default {
     })
     await ctx.session.hook("title", async (draft) => {
       const request = draft.messages.at(-1)
+      // A failed read leaves the title to the message alone, as OpenCode built it.
+      const attachedContext = ctx.session.context({ sessionID: draft.sessionID })
+        .then(attachedContextOfShortFirstMessage, () => "")
       // Free OpenCode models failed to generate titles with a replaced system
       // prompt. Keep the native prompt and give the same style in the input.
       // A user-configured title prompt wins and must not be rewritten here.
@@ -61,9 +66,7 @@ export default {
         draft.system[0].text = originalTitleSystem
         request.content.push({ type: "text", text: TITLE_SYSTEM_PROMPT })
       }
-      // A failed read leaves the title to the message alone, as OpenCode built it.
-      const context = await ctx.session.context({ sessionID: draft.sessionID })
-        .then(attachedContextOfShortFirstMessage, () => "")
+      const context = await attachedContext
       if (!context || request?.role !== "user") return
       // A text part on the same user message: some providers reject two user messages in a row.
       draft.messages = [

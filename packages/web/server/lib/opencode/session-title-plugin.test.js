@@ -19,6 +19,8 @@ const catalog = [
   { providerID: 'opencode', id: 'glm-5.3-flash-free', cost: free },
   { providerID: 'opencode', id: 'big-pickle', cost: free },
   { providerID: 'opencode', id: 'paid-model', cost: [{ input: 3, output: 15, cache: { read: 0.3, write: 3.75 } }] },
+  // Free up to a context size, paid above it: not free.
+  { providerID: 'opencode', id: 'tiered-model', cost: [...free, { tier: { type: 'context', size: 200000 }, input: 3, output: 15, cache: { read: 0.3, write: 3.75 } }] },
   { providerID: 'other', id: 'glm-5.3-flash-free', cost: free },
 ];
 const modelCatalog = { list: async () => ({ location: { directory: '/repo' }, data: catalog }) };
@@ -143,17 +145,25 @@ describe('session title plugin', () => {
       }
     });
 
-    it('keeps OpenChamber\'s prompt when the model catalog cannot be read', async () => {
-      const title = { id: 'title', system: 'OpenCode title prompt' };
-      const { hooks } = await runTransform(new Map([['title', title]]), { list: async () => { throw new Error('offline'); } });
-      const draft = titleDraft('Explain what an API endpoint is.');
-      draft.model = { providerID: 'opencode', id: 'big-pickle' };
-      draft.system = [{ type: 'text', text: title.system }];
+    it('goes by the -free suffix when the catalog has no price for the model', async () => {
+      const offline = { list: async () => { throw new Error('offline'); } };
+      for (const [catalogSource, id, swapped] of [
+        [offline, 'big-pickle', false],
+        [offline, 'deepseek-v4.1-flash-free', true],
+        [modelCatalog, 'unlisted-free', true],
+        [modelCatalog, 'unlisted-model', false],
+      ]) {
+        const title = { id: 'title', system: 'OpenCode title prompt' };
+        const { hooks } = await runTransform(new Map([['title', title]]), catalogSource);
+        const draft = titleDraft('Explain what an API endpoint is.');
+        draft.model = { providerID: 'opencode', id };
+        draft.system = [{ type: 'text', text: title.system }];
 
-      await hooks.get('title')(draft);
+        await hooks.get('title')(draft);
 
-      expect(draft.system[0].text).toBe(title.system);
-      expect(draft.messages[0].content).toHaveLength(1);
+        expect(draft.system[0].text).toBe(swapped ? 'OpenCode title prompt' : title.system);
+        expect(draft.messages[0].content).toHaveLength(swapped ? 2 : 1);
+      }
     });
 
     it('keeps user title overrides and other models unchanged', async () => {
@@ -162,6 +172,7 @@ describe('session title plugin', () => {
       for (const [model, system] of [
         [{ providerID: 'opencode', id: 'glm-5.3-flash-free' }, 'user title prompt'],
         [{ providerID: 'opencode', id: 'paid-model' }, title.system],
+        [{ providerID: 'opencode', id: 'tiered-model' }, title.system],
         [{ providerID: 'other', id: 'glm-5.3-flash-free' }, title.system],
       ]) {
         const draft = titleDraft('Explain what an API endpoint is.');

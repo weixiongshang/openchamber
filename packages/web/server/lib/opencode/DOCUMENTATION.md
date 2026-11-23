@@ -1536,14 +1536,16 @@ the folder-label style the UI's own regeneration uses
 - For a free Zen title model, the hook restores OpenCode's original system
   prompt and adds OpenChamber's style as a user text part. Zen's free tier
   answers no title to a replaced system prompt, and does with the original
-  prompt and the same style in the input (checked on 2.2.7, and on 2.3.0 and
-  2.3.2 with `big-pickle` and `deepseek-v4.1-flash-free`). This applies only when the
-  request still carries OpenChamber's prompt; a user-configured prompt stays
-  untouched.
+  prompt and the same style in the input (checked on 2.2.7; on 2.3.0 with
+  `big-pickle` and `deepseek-v4.1-flash-free`; on 2.3.2 with `big-pickle` in
+  the app). This applies only when the request still carries OpenChamber's
+  prompt; a user-configured prompt stays untouched.
 - A free Zen model is an `opencode` model that OpenCode's catalog
-  (`ctx.model.list()`) prices at zero. The name says nothing reliable:
-  `big-pickle` is free without a `-free` suffix, and matching the suffix left
-  its sessions untitled. A failed catalog read keeps OpenChamber's prompt.
+  (`ctx.model.list()`) prices at zero in every price tier. The name alone is not
+  enough: `big-pickle` is free without a `-free` suffix, and matching the suffix
+  left its sessions untitled. When the catalog gives no price (a failed read,
+  or a model the list leaves out), the `-free` suffix decides, so those models
+  keep their titles.
 - OpenCode titles from the first user message's text only. Context the user
   attached (a file comment, a browser annotation, PR checks) is admitted as
   synthetic messages right before that message (`sendMessage` in
