@@ -516,7 +516,7 @@ describe('managed agent tool runtime', () => {
       'workflow.check', 'workflow.run', 'workflow.status', 'workflow.result', 'workflow.stop', 'workflow.resume', 'workflow.save', 'workflow.list',
     ]);
     const parameters = tools.openchamber_workflow.input.properties.parameters.properties;
-    expect(parameters.script.description).toContain('agent(prompt, { label, phase, agent, model, schema })');
+    expect(parameters.script.description).toContain('agent(prompt, { id, forkFrom, label, phase, agent, model, schema })');
     expect(Object.keys(parameters)).toEqual(['script', 'name', 'args', 'runId', 'agent', 'overwrite']);
     // The answer tool comes along, direct; the managed config denies it outside workflow agents.
     expect(tools.openchamber_workflow_answer.options).toEqual({ codemode: false });
@@ -742,6 +742,51 @@ describe('managed agent tool runtime', () => {
     expect((await runtime.execute({ tool: 'openchamber', input: { action: 'terminal.list' }, sessionID: 'ses_a' })).ok).toBe(false);
   });
 
+  it('exposes project actions as their own tool only when switched on, owned by the session OpenCode reported', async () => {
+    const created = [];
+    const closed = [];
+    const terminals = {
+      listTerminals: () => created.map((sessionId) => ({ sessionId, cwd: '/repo', status: 'running', createdAt: 1, mode: 'command', purpose: { type: 'project-action', actionId: 'dev', executionId: sessionId, agentSessionId: 'ses_real' } })),
+      readTerminal: () => null,
+      createSession: async ({ sessionId }, agentSessionId) => { created.push(sessionId); expect(agentSessionId).toBe('ses_real'); return sessionId; },
+      closeTerminal: async (sessionId) => { closed.push(sessionId); return true; },
+    };
+    const releaseAnswerWaits = vi.fn();
+    const { runtime, dataDir, executeAction } = await createRuntime({
+      releaseAnswerWaits,
+      projectActions: {
+        readSettings: async () => ({ agentActionsToolEnabled: true, projects: [{ id: 'proj', path: '/repo' }] }),
+        getTerminalRuntime: () => terminals,
+        projectPathFor: async () => '/repo',
+        readProjectSetup: async () => ({ projectActions: [{ id: 'dev', name: 'Dev', command: 'bun run dev', icon: null }], trust: { trusted: true } }),
+      },
+    });
+    await prepareManagedEnv(runtime, { includeControl: false, includeWeb: false, includeMemory: false, includeActions: true });
+    const namespaces = [];
+    const tool = await loadTools(dataDir, 'actions', {}, [], namespaces);
+
+    expect(Object.keys(tool)).toEqual(['openchamber_actions']);
+    expect(Object.keys(tool.openchamber_actions.input.properties.parameters.properties).sort()).toEqual(['maxBytes', 'name']);
+    expect(tool.openchamber_actions.options).toEqual({ codemode: true });
+    expect(namespaces).toEqual([expect.objectContaining({ name: 'openchamber_actions' })]);
+    expect(tool.openchamber_actions.description.length).toBeLessThanOrEqual(2048);
+
+    // A run belongs to the session OpenCode named, never to one the payload claims.
+    const result = await runtime.execute({ tool: 'openchamber_actions', input: { action: 'run', name: 'dev' }, sessionID: 'ses_real', contextSessionId: 'ses_spoof', contextDirectory: '/repo' });
+    expect(result).toMatchObject({ ok: true, action: 'actions.run', data: { started: true } });
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(await runtime.hasProjectActions('/repo')).toBe(true);
+
+    // The session's end stops its runs; idle and errors release waits as before.
+    runtime.processSessionEvent({ type: 'session.archived', properties: { sessionID: 'ses_real' } });
+    await vi.waitFor(() => expect(closed).toEqual(created));
+    runtime.processSessionEvent({ type: 'session.error', properties: { sessionID: 'ses_real' } });
+    expect(releaseAnswerWaits).toHaveBeenCalledWith('ses_real');
+
+    await runtime.materializePlugin({ includeControl: true, includeWeb: false, includeMemory: false });
+    expect(await loadTools(dataDir, 'actions-off')).not.toHaveProperty('openchamber_actions');
+  });
+
   it('declares share on render only while sharing is available', async () => {
     const { runtime, dataDir } = await createRuntime();
     await prepareManagedEnv(runtime, { includeControl: false, includeWeb: false, includeMemory: false, includeRender: true, includeShare: true });
@@ -793,7 +838,7 @@ describe('managed agent tool runtime', () => {
 
     expect(Object.keys(tools)).toEqual(['openchamber_secret']);
     expect(Object.keys(tools.openchamber_secret.input.properties.parameters.properties).sort())
-      .toEqual(['args', 'inputs', 'label', 'placeholder', 'program', 'reason', 'timeoutMs']);
+      .toEqual(['args', 'inputs', 'label', 'placeholder', 'program', 'reason', 'saved', 'timeoutMs']);
     expect(tools.openchamber_secret.options).toEqual({ codemode: false });
     expect(tools.openchamber_secret.description.length).toBeLessThanOrEqual(2048);
     // A chat message ends the wait, like a page's.
@@ -852,6 +897,7 @@ describe('managed agent tool runtime', () => {
   it.each([
     ['secret.request', { action: 'request', label: 'Token', reason: 'Deploy' }],
     ['secret.run', { action: 'run', program: 'wrangler', args: ['deploy'], reason: 'Deploy', inputs: [{ env: 'TOKEN', label: 'Token' }] }],
+    ['secret.forget', { action: 'forget', saved: 'true' }],
   ])('keeps a %s card waiting through an agent or queued prompt, and ends it for the user', async (action, input) => {
     const { runtime, dataDir } = await createRuntime();
     const prepared = await prepareManagedEnv(runtime, { includeControl: false, includeWeb: false, includeMemory: false, includeSecret: true });
@@ -1264,6 +1310,7 @@ describe('managed agent tool runtime', () => {
     ['browser.type', 'openchamber_web', { selector: '#q', value: 'x', submit: 'yes' }, 'submit'],
     ['knowledge.save', 'openchamber_knowledge', { kind: 'todo', id: 't1', completed: 'false' }, 'completed'],
     ['notify.send', 'openchamber_notify', { title: 't', showWhenFocused: 1 }, 'showWhenFocused'],
+    ['secret.forget', 'openchamber_secret', { saved: 'yes' }, 'saved'],
   ])('refuses a %s whose boolean %s field is not a boolean', async (action, tool, input, field) => {
     const { runtime, executeAction } = await createRuntime();
     const result = await runtime.execute({ input: { action, ...input }, sessionID: 'ses_1', tool });

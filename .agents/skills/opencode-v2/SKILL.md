@@ -141,6 +141,11 @@ gap.
   5 seconds for the location's plugins. `agent.list` waited in 2.2.0 to 2.2.6
   and answers early again since 2.2.7: the first read of a cold location is an
   empty list, then `agent.updated` follows within a second. The recovery stays.
+  OpenChamber's server session selection works around it by reading
+  `model.list` first, which waits for activation, and `agent.list` after it
+  (`openchamber-sessions/selection-inputs.ts`); a `ServiceUnavailableError`
+  with `service: 'plugin'` from that read refuses default selection with 503.
+  Restore the parallel reads once `agent.list` itself waits for activation.
 - **Plugin providers exist only in the running OpenCode.** Nothing about them
   reaches `opencode.json` or `auth.json`; `/api/provider` is the only view, and
   it strips `options.fetch`, so nothing tells a directly callable provider from
@@ -214,10 +219,10 @@ gap.
   `packages/web/server/lib/opencode/compatibility.js`; raise it when OpenChamber
   starts depending on a route a newer tag added.
 - Pinned version: the `@opencode/*` devDependencies in
-  `packages/electron/package.json` (`@opencode/server` and the packages the
-  desktop's bundled server imports, `packages/electron/opencode-server`) and
+  `packages/web/package.json` and `packages/electron/package.json` (`@opencode/server` and the packages the
+  bundled server imports, `packages/web/opencode-server`), the four native wrapper packages in `packages/web/package.json` `dependencies` (`@lydell/node-pty`, `@parcel/watcher`, `@ff-labs/fff-node`, `@opencode/pty`), and
   `@opencode/client` / `@opencode/schema` in the root, ui, web and vscode
-  manifests, plus `@opencode/cli@` in the Dockerfile. They move together,
+  manifests. They move together,
   including `opencode.url` in `flake.nix` (see the bump steps).
 
 ## "What's new in OpenCode 2.x?"
@@ -242,18 +247,18 @@ Move every pin to the same tag and check out that tag in the reference
 checkout (`git checkout vX.Y.Z` in `~/projects/opencode`), `bun install`, then `bun run type-check`
 (it covers `packages/ui`, `packages/web` and `packages/vscode`); the isolated ui suites; web vitest; vscode
 tests. A new message `type` or event needs a case in `model.ts` and
-`events.ts` before it renders. Verify `@opencode/cli@<tag>` exists on npm:
-the Docker image installs it.
+`events.ts` before it renders.
 
-The desktop bundles OpenCode's server from those npm packages
-(`packages/electron/opencode-server`), and `server.mjs` there copies the
+Both `@openchamber/web` (including the Docker image) and desktop bundle OpenCode's server from those npm packages
+(`packages/web/opencode-server`), and `server.mjs` there copies the
 option mapping of OpenCode's `packages/cli/src/server-process.ts`. Diff that
 file between the tags (`git diff vOLD..vNEW -- packages/cli/src/server-process.ts packages/cli/src/node packages/cli/vite.node.config.ts`)
 and carry over every change to the `default` and `stdio` modes: a new
 environment variable, option or startup step, and a new native loader or
-rewrite in the Node build. Then `bun run --cwd packages/electron prepare:opencode-server`
-and `verify:opencode-server`, and one real turn through the staged server
-(`packages/electron/opencode-server/DOCUMENTATION.md`).
+rewrite in the Node build. Then `bun run --cwd packages/web prepare:opencode-server`,
+`bun run --cwd packages/electron prepare:opencode-server` and `verify:opencode-server`,
+and one real turn through the staged server
+(`packages/web/opencode-server/DOCUMENTATION.md`).
 
 Set `opencode.url` in `flake.nix` to the same `vX.Y.Z` tag and run
 `nix flake update opencode` from the OpenChamber root. Include `flake.nix` and

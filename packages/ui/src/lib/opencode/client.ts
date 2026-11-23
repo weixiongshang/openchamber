@@ -57,8 +57,10 @@ import {
   toModelRef,
 } from "./model"
 import { ascendingId } from "./ids"
+import { matchSkillMentions, type SkillAttachmentRef } from "./skill-mentions"
 import { runningShellFromWire, shellCancellationNote, type RunningShell, type ShellToStop } from "./background-shell"
 import { runningImageJobFromWire, type RunningImageJob } from "./background-image"
+import { writeTempFiles, type TempFileResult, type TempFileSource } from "./temp-files"
 import { subagentCancellationNote } from "./subagent-run"
 import { toJsonRecord } from "./json"
 import { withZenName } from "./providerDisplayName"
@@ -198,8 +200,6 @@ export type SkillMentions = {
   names: readonly string[]
   instructionFor: (names: readonly string[]) => string | null
 }
-
-type SkillAttachmentRef = { id: string; name: string }
 
 const isSkillNotFound = (error: OpencodeApiError): boolean =>
   error.tag === "InvalidRequestError" && error.detail.startsWith("Skill not found")
@@ -1869,19 +1869,13 @@ class OpencodeService {
     if (names.length === 0) return { attached: [], unresolved: [] }
     let known: Skill[]
     try {
+      await call("model.default", () => this.clientFor(directory).model.default()).catch(() => undefined)
       known = await this.listSkills(directory)
     } catch (error) {
       console.warn("[opencode] Could not list skills; naming them in an instruction instead:", error)
       return { attached: [], unresolved: [...names] }
     }
-    const attached: SkillAttachmentRef[] = []
-    const unresolved: string[] = []
-    for (const name of names) {
-      const match = known.find((skill) => skill.name === name) ?? known.find((skill) => skill.id === name)
-      if (!match) unresolved.push(name)
-      else if (!attached.some((skill) => skill.id === match.id)) attached.push({ id: match.id, name })
-    }
-    return { attached, unresolved }
+    return matchSkillMentions(names, known)
   }
 
   async listMcpServers(directory?: string | null): Promise<McpServerStatus[]> {
@@ -1935,22 +1929,18 @@ class OpencodeService {
 
   async writeOpenCodeTempFiles(
     directory: string | null | undefined,
-    files: Array<{ filename: string; bytes: Uint8Array }>,
-  ): Promise<Array<{ filename: string; path: string } | { filename: string; error: Error }>> {
+    files: readonly TempFileSource[],
+    options?: { isCurrentRuntime?: () => boolean },
+  ): Promise<TempFileResult[]> {
+    const assertCurrent = () => {
+      if (options?.isCurrentRuntime && !options.isCurrentRuntime()) throw new Error("The file was not saved because the runtime changed.")
+    }
+    assertCurrent()
     const client = this.clientFor(directory)
     const info = await call("server.info", () => client.server.info())
-    const folderName = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join("")
-    const folder = `${info.paths.tmp.replace(/[\\/]+$/, "")}/openchamber/${folderName}`
-    const results: Array<{ filename: string; path: string } | { filename: string; error: Error }> = []
-    for (const { filename, bytes } of files) {
-      try {
-        const written = await call("file.write", () => client.experimental.file.write({ path: `${folder}/${filename}`, payload: bytes }))
-        results.push({ filename, path: written.data.path })
-      } catch (error) {
-        results.push({ filename, error: error instanceof Error ? error : new Error(String(error)) })
-      }
-    }
-    return results
+    return writeTempFiles(info.paths.tmp, files, assertCurrent, async (path, payload) => (
+      (await call("file.write", () => client.experimental.file.write({ path, payload }))).data.path
+    ))
   }
 
 

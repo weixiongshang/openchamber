@@ -4,6 +4,7 @@ import type { SettingsDocument, createSettingsHelpers } from './settings-helpers
 import type { SettingsProject, createSettingsNormalizationRuntime } from './settings-normalization-runtime.js';
 import type { createManagedTunnelConfigRuntime } from '../tunnels/managed-config.js';
 import type { PreferenceFields, SettingsSurface } from './settings-files.js';
+import { createSettingsWriteQueue } from './settings-write-queue.js';
 import { isBoolean, isString } from '../shared/object-guards.js';
 import type fsModule from 'node:fs/promises';
 import type pathModule from 'node:path';
@@ -110,22 +111,8 @@ const normalizeNotificationTemplates = (templates: SettingsDocument[string]) => 
   return { templates: next, changed };
 };
 
-const MANAGED_PLUGIN_SETTINGS_KEYS = new Set([
-  'agentControlToolEnabled',
-  'agentScheduleToolEnabled',
-  'agentWebToolEnabled',
-  'agentMemoryToolEnabled',
-  'agentKnowledgeToolEnabled',
-  'agentNotifyToolEnabled',
-  'agentRenderToolEnabled',
-  'agentImageToolEnabled',
-  'agentSecretToolEnabled',
-  'agentUsageToolEnabled',
-  'agentTerminalToolEnabled',
-  'agentWorkflowToolEnabled',
-  'fallbackModel',
-  'accountSwitchProviders',
-]);
+const MANAGED_PLUGIN_SETTING = /^agent[A-Z]\w*ToolEnabled$/;
+const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['fallbackModel', 'accountSwitchProviders']);
 
 export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
   const {
@@ -152,8 +139,6 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
     onPermissionDefaultModeChanged = () => {},
     onLastDirectoryChanged = () => {},
   } = deps;
-
-  let persistSettingsLock: Promise<unknown> = Promise.resolve();
 
   const PREFERENCES_FILE_PATH = preferencesFilePathFor(SETTINGS_FILE_PATH, path);
   let preferencesUnavailable = false;
@@ -1081,8 +1066,9 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
     return normalizeSettingsSurface(surface) ? readSettingsFromDisk({ surface }) : migration9.settings;
   };
 
+  const { enqueue, updateSettingsFromDisk } = createSettingsWriteQueue(readSettingsFromDiskMigrated, writeSettingsToDisk);
   const persistResolvedSettings = async (resolveChanges: (current: SettingsDocument) => SettingsDocument, { surface = null }: SettingsReadOptions = {}) => {
-    const result = persistSettingsLock.then(async () => {
+    return enqueue(async () => {
       const current = await readSettingsFromDisk({ surface });
       const changes = resolveChanges(current);
       console.log('[persistSettings] Updating fields:', Object.keys(changes || {}).join(', ') || '(none)');
@@ -1167,7 +1153,7 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
 
       const changedKeys = Object.keys(sanitized);
       await writeSettingsToDisk(next, { surface, changedKeys });
-      if (changedKeys.some((key) => MANAGED_PLUGIN_SETTINGS_KEYS.has(key))) {
+      if (changedKeys.some((key) => MANAGED_PLUGIN_SETTING.test(key) || MANAGED_PLUGIN_SETTINGS_KEYS.has(key))) {
         await Promise.resolve(onManagedPluginSettingsChanged(next)).catch((error) => {
           console.warn('Failed to refresh the managed OpenCode config:', error?.message ?? error);
         });
@@ -1186,14 +1172,12 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
       }
       return formatSettingsResponse(next);
     });
-    persistSettingsLock = result.catch(() => {});
-    return result;
   };
 
   const persistSettings = (changes: SettingsDocument, options?: SettingsReadOptions) => persistResolvedSettings(() => changes, options);
 
   const registerSessionProject = (resolveProject: (projects: SettingsProject[]) => SettingsProject | Promise<SettingsProject>) => {
-    const result = persistSettingsLock.then(async () => {
+    return enqueue(async () => {
       const current = await readSettingsFromDiskStrict();
       if (Array.isArray(current) || (current.projects !== undefined && !Array.isArray(current.projects))) {
         throw new Error('Project registry is malformed');
@@ -1205,8 +1189,6 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
       }
       return project;
     });
-    persistSettingsLock = result.catch(() => {});
-    return result;
   };
 
   return {
@@ -1216,6 +1198,7 @@ export const createSettingsRuntime = (deps: SettingsRuntimeDependencies) => {
     writeSettingsToDisk,
     persistSettings,
     persistResolvedSettings,
+    updateSettingsFromDisk,
     registerSessionProject,
   };
 };

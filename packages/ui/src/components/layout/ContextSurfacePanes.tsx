@@ -6,6 +6,7 @@ import { BrowserPane } from '@/components/browser/BrowserPane';
 import { ChatView } from '@/components/views/ChatView';
 import { Icon } from '@/components/icon/Icon';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useGuestTabsInScope } from '@/hooks/useGuestSurfaces';
 import { useDraftSpaceTarget } from '@/lib/spaces/useDraftSpaceTarget';
 import { panelContentDirectory } from '@/lib/spaces/space-creation-requests';
 import { spaceIdOfDirectory } from '@/lib/spaces/space-route';
@@ -41,6 +42,7 @@ import { useZoneHostsStore } from './zoneHosts';
 import { useRightSlotStore } from './rightSlot';
 import { useOpenUntilSettled, useOpenWhenSettled } from './useOpenUntilSettled';
 import { useClosingZoneTab } from './useClosingZoneTab';
+import { isZoneDisplaced } from './zoneFitWatch';
 import { isZoneExposed, ZoneInteractiveContext } from './zoneInteractiveContext';
 import { PauseClock } from '@/components/ui/pause-clock';
 import { DockedPanelSurfaceContext } from '@/hooks/usePageColors';
@@ -60,7 +62,7 @@ type PanelBrowserTab = {
 const browserTabRenderKey = (directory: string, tabId: string): string => `${directory}\u0000${tabId}`;
 const AGENT_TAB_IDLE_SWEEP_MS = 60_000;
 
-const EditorTreeColumn: React.FC<{ visible: boolean; active: boolean; fill?: boolean; side: 'left' | 'right' }> = ({ visible, active, fill = false, side }) => {
+const EditorTreeColumn: React.FC<{ visible: boolean; active: boolean; fill?: boolean; stretch?: boolean; side: 'left' | 'right' }> = ({ visible, active, fill = false, stretch = false, side }) => {
   const { t } = useI18n();
   const width = useUIStore((state) => state.contextEditorTreeWidth);
   const setWidth = useUIStore((state) => state.setContextEditorTreeWidth);
@@ -128,6 +130,7 @@ const EditorTreeColumn: React.FC<{ visible: boolean; active: boolean; fill?: boo
   };
 
   const appliedWidth = visible ? width : 0;
+  const stretched = fill && stretch && visible;
 
   return (
     <div
@@ -137,11 +140,11 @@ const EditorTreeColumn: React.FC<{ visible: boolean; active: boolean; fill?: boo
         fill && (side === 'left' ? 'me-auto' : 'ms-auto'),
       )}
       style={{
-        width: `${isResizing ? (liveWidthRef.current ?? appliedWidth) : appliedWidth}px`,
+        width: stretched ? '100%' : `${isResizing ? (liveWidthRef.current ?? appliedWidth) : appliedWidth}px`,
         maxWidth: fill ? '100%' : undefined,
         ['--oc-editor-tree-width' as string]: `${isResizing ? (liveWidthRef.current ?? width) : width}px`,
         overflowX: 'clip',
-        transitionProperty: isResizing ? 'none' : 'width',
+        transitionProperty: isResizing || stretch ? 'none' : 'width',
         transitionDuration: '200ms',
         transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
       }}
@@ -172,7 +175,7 @@ const EditorTreeColumn: React.FC<{ visible: boolean; active: boolean; fill?: boo
           isResizing && 'pointer-events-none',
           !visible && 'pointer-events-none select-none opacity-0'
         )}
-        style={{ width: 'var(--oc-editor-tree-width)', maxWidth: fill ? '100%' : undefined }}
+        style={{ width: stretched ? '100%' : 'var(--oc-editor-tree-width)', maxWidth: fill ? '100%' : undefined }}
         aria-hidden={!visible}
       >
         <SidebarFilesTree visible={visible && active} />
@@ -209,7 +212,7 @@ export const ContextSurfacePanes: React.FC = () => {
     () => (effectiveDirectory ? normalizeContextPanelDirectoryKey(effectiveDirectory) : ''),
     [effectiveDirectory],
   );
-  const panelState = useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined));
+  const panelState = useGuestTabsInScope(useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined)));
   const draftSpace = useDraftSpaceTarget();
   const spacePreparing = draftSpace?.kind === 'preparing';
   const draftSpaceDirectory = draftSpace?.kind === 'ready' ? draftSpace.directory : null;
@@ -515,7 +518,7 @@ export const ContextSurfacePanes: React.FC = () => {
           ) : hasOpenEditorFile || !contextEditorTreeVisible ? (
             <div className={cn('h-full min-w-0 flex-1', hasOpenEditorFile && !showsEditor && 'hidden')}>
               {hasOpenEditorFile ? (
-                <React.Suspense fallback={null}><FilesView mode="editor-only" visible={!contentHidden(fileZone.zone) && isFileTabActive && showsEditor} onCloseFile={handleCloseEditorFile} /></React.Suspense>
+                <React.Suspense fallback={null}><FilesView visible={!contentHidden(fileZone.zone) && isFileTabActive && showsEditor} onCloseFile={handleCloseEditorFile} /></React.Suspense>
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
                   <Icon name="file-code" className="h-12 w-12 text-muted-foreground/50" />
@@ -525,7 +528,7 @@ export const ContextSurfacePanes: React.FC = () => {
               )}
             </div>
           ) : null}
-          {spacePreparing ? null : <EditorTreeColumn visible={contextEditorTreeVisible} active={fileZone.isOpen && isFileTabActive} fill={!showsEditor} side={fileTreeSide} />}
+          {spacePreparing ? null : <EditorTreeColumn visible={contextEditorTreeVisible} active={fileZone.isOpen && isFileTabActive} fill={!showsEditor} stretch={fileZone.zone === 'bottom'} side={fileTreeSide} />}
         </ZonePane>
       ) : null}
       {chatActiveTab && activeChatSessionID && activeChatPinnedSession ? (
@@ -671,7 +674,7 @@ export const ContextSurfacePanes: React.FC = () => {
             className={cn('absolute inset-0', shown ? 'block' : 'hidden')}
           >
             <React.Suspense fallback={null}>
-              <GuestPanelContent mode={tab.mode} sharedSurface={sharedSurface} docking={docking ?? null} surfaceMounted={surfaceMounted} />
+              <GuestPanelContent mode={tab.mode} sharedSurface={sharedSurface} docking={docking ?? null} surfaceMounted={surfaceMounted} panelOpen={Boolean(panelState && getZoneView(panelState, pluginZone.zone).isOpen) || isZoneDisplaced(directoryKey, pluginZone.zone)} />
             </React.Suspense>
           </ZonePane>
         );

@@ -2,7 +2,7 @@
 
 ## Ownership
 
-Electron owns native windows, privileged IPC, desktop host credentials, browser-panel sessions, SSH and tunnel lifecycle, the in-process server's startup and shutdown, and the OpenCode server the app ships ([opencode-server/DOCUMENTATION.md](opencode-server/DOCUMENTATION.md)), which the in-process server starts. Shared UI and runtime selection belong to `packages/ui`; the server and relay tunnel client belong to `packages/web`. Build and release constraints live in [scripts/DOCUMENTATION.md](scripts/DOCUMENTATION.md). Commands and platform setup live in [README.md](README.md).
+Electron owns native windows, privileged IPC, desktop host credentials, browser-panel sessions, SSH and tunnel lifecycle, the in-process server's startup and shutdown, and staging the target-architecture OpenCode server ([../web/opencode-server/DOCUMENTATION.md](../web/opencode-server/DOCUMENTATION.md)), which the in-process server starts. Shared UI and runtime selection belong to `packages/ui`; the server and relay tunnel client belong to `packages/web`. Build and release constraints live in [scripts/DOCUMENTATION.md](scripts/DOCUMENTATION.md). Commands and platform setup live in [README.md](README.md).
 
 ## Invariants
 
@@ -41,6 +41,7 @@ Electron owns native windows, privileged IPC, desktop host credentials, browser-
 - AppImage launcher integration writes its icon before publishing the desktop entry because GNOME reads the entry immediately. Only app-marked entries are managed; user-hidden entries and third-party integration retain ownership. Installed package entries take precedence over an AppImage user entry, which would otherwise shadow them.
 - Hiding during a macOS full-screen transition preserves the latest visibility intent. A queued full-screen exit still completes after an explicit show; restoration waits for that exit. Hide/toggle can restore full screen, while close discards restoration. Early entry remains limited by Electron's lack of a public entry-start signal.
 - Minimize remains a normal taskbar or Dock minimize. Only close participates in tray background mode. macOS activation restores the last live surface, including a minimized mini chat, before creating another main window.
+- A context panel window (`context-window-controller.mjs`, `packages/ui/src/lib/contextWindow`) is the owner's app page with the owner's runtime. Closing it always closes it: tray, Quake and the macOS last-window hide skip it, and it does not count as a visible main window. The owner gets `openchamber:context-window-closed`; the panel window hides and shows with its owner and closes with it. `desktopContextWindow.owners` lists the owners of open panel windows; a quit leaves it as it is, and so does closing the last main window outside macOS, which quits the app. The first main window of the next run takes that list once to reopen the panel window at its saved bounds.
 
 ### Privilege and host boundaries
 
@@ -65,6 +66,7 @@ Electron owns native windows, privileged IPC, desktop host credentials, browser-
 - Panel driver scripts and annotation bindings run in isolated worlds, including cross-origin frames. Only the top overlay's own world holds the microphone binding, so page scripts cannot call it. Annotation cancellation can precede session creation; cleanup from the previous session can still be running when the next starts.
 - Dialog handling stays available while Page.enable is pending because a dialog can block that command's response. Actions return when they open a dialog, and agent tabs answer dialogs immediately with the action's chosen response to avoid blocking the whole app window. Recorded dialog history is bounded because a page can loop on alerts.
 - Pointer input uses the debugger session that owns the target frame and coordinates relative to that session. Sending cross-origin input to the top page makes hidden-panel hit testing depend on app layout. HTML-draggable elements use scripted drag events because native HTML drag starts a system session the guest cannot intercept.
+- Browser press maps Shift with US digit and punctuation keys to the shifted character. The unmodified text remains the base character, and Control, Meta, and Alt chords insert no text.
 - Focus emulation keeps agent pages' controls and clipboard usable without taking the user's keyboard focus. It is reapplied before focusing actions because navigation replaces page state. Colour-scheme emulation is per page; changing `nativeTheme.themeSource` would change the app too. A white base canvas prevents transparent pages from showing the app behind them or capturing black.
 - Only shell-staged upload files enter a page. Each file has its own folder and a single-segment filename so duplicate names survive and paths cannot escape staging. Files remain for a day because a form can read them later; age-based cleanup preserves files another app instance still uses.
 - Favicons are fetched with the page's own session and returned as bounded data URLs. This preserves login cookies and avoids third-party requests from the app origin. Space views receive no shell-fetched favicon because that request could reach the user's resources on the space's behalf.
@@ -92,6 +94,13 @@ Electron owns native windows, privileged IPC, desktop host credentials, browser-
 - Unpackaged Dock branch badges take precedence over unread counts so worktree copies remain distinguishable. The window's development tape ignores pointer input and is reapplied on document readiness because inserted CSS lasts only until reload.
 
 ## Decisions
+
+### When macOS updates use Squirrel's direct-Contents mode
+
+Squirrel.Mac asks for an administrator when the app bundle or its parent folder is not writable. Its `SquirrelMacEnableDirectContentsWrite` user default needs only the bundle: ShipIt renames `<App>.app/Contents` instead of the whole bundle ([pinned implementation for Electron 45](https://github.com/Squirrel/Squirrel.Mac/blob/fffea30e4a339a7f7d69a3391314b72548d209bd/Squirrel/SQRLUpdater.m#L413-L419), [installer](https://github.com/Squirrel/Squirrel.Mac/blob/fffea30e4a339a7f7d69a3391314b72548d209bd/Squirrel/SQRLInstaller.m#L590-L615)).
+
+- The packaged app sets it to `true` at startup only while the key is unset, the bundle and its `Contents` are writable with plain permissions (no ACL entry, file flag or sticky bit that could still refuse the `Contents` rename), and the parent folder is not: the one case where the mode removes a prompt. A fresh install, an install in a writable folder and a root-owned copy keep Squirrel's usual path; a root-owned copy still prompts until its permissions are repaired.
+- A stored boolean is never overwritten. `false` is the user's opt-out (`defaults write <bundle id> SquirrelMacEnableDirectContentsWrite -bool false`). Electron reads a missing key and a stored empty string alike, so a non-boolean empty string counts as unset; Squirrel documents only booleans for this key. An enabled value is kept when the install or its permissions change later, because ShipIt reads the same key when it resumes or rolls back an interrupted install; with an unwritable bundle Squirrel still takes the privileged path, and with a writable parent the Contents rename works as well as the whole-bundle move.
 
 ### Why manual proxy rules and not a PAC script
 

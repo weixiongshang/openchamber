@@ -2,7 +2,7 @@ const PLUGIN_ID = 'openchamber-session-title';
 
 const TITLE_SYSTEM_PROMPT = [
   'You name coding sessions so the user can find them later in a list.',
-  'Reply with a title of two to four words in the language of the user\'s message, at most 40 characters. Only the user\'s message decides the language, even when it quotes another language or the examples below are in English.',
+  'Reply with a title of two to four words in the language of the user\'s message, at most 40 characters. Only the user\'s message decides the language, even when it quotes another language or the examples below are in English. Words inside a path or file name count only when the message has no other words: `read ~/plans/sync.md` is English, `阅读 ~/plans/sync.md` is Chinese, and `~/plans/sync.md` alone is English.',
   'Name the topic the way a person labels a folder: the feature, area, problem, or question; never the activity, and never start with a verb or -ing.',
   'Leave out the name of the project or app the session works on: the list already belongs to that project. Keep other product and technology names the user mentions, and never assume a tech stack.',
   'Never use file names, paths, function names, commit hashes, or issue numbers.',
@@ -14,7 +14,7 @@ const TITLE_SYSTEM_PROMPT = [
 const SHORT_MESSAGE_LENGTH = 20;
 const MAX_ATTACHED_CONTEXT_LENGTH = 2000;
 
-const PLUGIN_SOURCE = `const TITLE_SYSTEM_PROMPT = ${JSON.stringify(TITLE_SYSTEM_PROMPT)}
+export const SESSION_TITLE_PLUGIN_HELPERS = `const TITLE_SYSTEM_PROMPT = ${JSON.stringify(TITLE_SYSTEM_PROMPT)}
 const SHORT_MESSAGE_LENGTH = ${SHORT_MESSAGE_LENGTH}
 const MAX_ATTACHED_CONTEXT_LENGTH = ${MAX_ATTACHED_CONTEXT_LENGTH}
 
@@ -41,12 +41,11 @@ const isFreeZenModel = async (ctx, model) => {
   if (!info?.cost?.length) return model.id.endsWith("-free")
   return info.cost.every((tier) => tier.input === 0 && tier.output === 0)
 }
+`;
 
-export default {
-  id: ${JSON.stringify(PLUGIN_ID)},
-  setup: async (ctx) => {
-    let originalTitleSystem
+export const createSessionTitleSetupCode = ({ isActiveExpr = 'true' }: { isActiveExpr?: string } = {}) => `    let originalTitleSystem
     await ctx.agent.transform((editor) => {
+      if (!(${isActiveExpr})) return
       if (!editor.get("title")) return
       if (editor.get("title").system !== TITLE_SYSTEM_PROMPT) originalTitleSystem = editor.get("title").system
       editor.update("title", (agent) => {
@@ -54,6 +53,7 @@ export default {
       })
     })
     await ctx.session.hook("title", async (draft) => {
+      if (!(${isActiveExpr})) return
       const request = draft.messages.at(-1)
       // A failed read leaves the title to the message alone, as OpenCode built it.
       const attachedContext = ctx.session.context({ sessionID: draft.sessionID })
@@ -84,7 +84,13 @@ export default {
           ],
         },
       ]
-    })
+    })`;
+
+const PLUGIN_SOURCE = `${SESSION_TITLE_PLUGIN_HELPERS}
+export default {
+  id: ${JSON.stringify(PLUGIN_ID)},
+  setup: async (ctx) => {
+${createSessionTitleSetupCode()}
   },
 }
 `;

@@ -7,6 +7,7 @@ import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useGitmojiList } from '@/hooks/useGitmojiList';
+import { readGitViewSnapshot, rememberGitViewSnapshot, type GitViewSnapshot } from '@/components/views/gitViewSnapshots';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { normalizePath } from '@/lib/pathNormalization';
@@ -118,12 +119,6 @@ type HistoryBranchDivider = {
 
 const GIT_RECONCILE_DELAY_MS = 15000;
 
-type GitViewSnapshot = {
-  directory?: string;
-  commitMessage: string;
-  generatedHighlights: string[];
-};
-
 type GitmojiEntry = {
   emoji: string;
   code: string;
@@ -196,21 +191,6 @@ const matchGitmojiFromSubject = (subject: string, gitmojis: GitmojiEntry[]): Git
   }
 
   return null;
-};
-
-const GIT_VIEW_SNAPSHOTS_CAP = 20;
-
-const gitViewSnapshots = new Map<string, GitViewSnapshot>();
-
-const rememberSnapshot = (key: string, snapshot: GitViewSnapshot) => {
-  gitViewSnapshots.delete(key);
-  gitViewSnapshots.set(key, snapshot);
-  if (gitViewSnapshots.size > GIT_VIEW_SNAPSHOTS_CAP) {
-    const oldest = gitViewSnapshots.keys().next().value;
-    if (oldest !== undefined) {
-      gitViewSnapshots.delete(oldest);
-    }
-  }
 };
 
 const isStagedStatusFile = (file: GitStatus['files'][number]): boolean => {
@@ -624,7 +604,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   const initialSnapshot = React.useMemo(() => {
     if (!gitDirectory) return null;
-    return gitViewSnapshots.get(gitDirectory) ?? null;
+    return readGitViewSnapshot(gitDirectory);
   }, [gitDirectory]);
 
   const settingsGitmojiEnabled = useConfigStore((state) => state.settingsGitmojiEnabled);
@@ -714,33 +694,6 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     if (!tracking) return true;
     return tracking.startsWith('origin/');
   }, [status?.tracking]);
-  const defaultTargetBranch = React.useMemo(() => {
-    const fromMeta = worktreeMetadata?.createdFromBranch;
-    const normalizedFromMeta = typeof fromMeta === 'string' ? fromMeta.trim() : '';
-    const current = typeof status?.current === 'string' ? status.current.trim() : '';
-    const normalizedRoot = typeof rootBranchHint === 'string' ? rootBranchHint.trim() : '';
-
-    if (normalizedFromMeta) {
-      const looksLikeCorruptedSelfTarget =
-        normalizedFromMeta === current &&
-        normalizedFromMeta.startsWith('opencode/') &&
-        normalizedRoot.length > 0 &&
-        normalizedRoot !== normalizedFromMeta;
-
-      if (looksLikeCorruptedSelfTarget) {
-        return normalizedRoot;
-      }
-
-      return normalizedFromMeta;
-    }
-    if (normalizedRoot) {
-      return normalizedRoot;
-    }
-    if (current) {
-      return current;
-    }
-    return 'HEAD';
-  }, [worktreeMetadata?.createdFromBranch, status, rootBranchHint]);
   const clearGeneratedHighlights = React.useCallback(() => {
     setGeneratedHighlights([]);
   }, []);
@@ -926,14 +879,14 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   React.useEffect(() => {
     if (!gitDirectory) return;
-    const snapshot = gitViewSnapshots.get(gitDirectory) ?? null;
+    const snapshot: GitViewSnapshot | null = readGitViewSnapshot(gitDirectory);
     setCommitMessage(snapshot?.commitMessage ?? '');
     setGeneratedHighlights(snapshot?.generatedHighlights ?? []);
   }, [gitDirectory]);
 
   React.useEffect(() => {
     if (!gitDirectory) return;
-    rememberSnapshot(gitDirectory, {
+    rememberGitViewSnapshot(gitDirectory, {
       directory: gitDirectory,
       commitMessage,
       generatedHighlights,
@@ -1083,6 +1036,8 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     const files = status.files ?? [];
     return [...files].sort((a, b) => a.path.localeCompare(b.path));
   }, [status]);
+
+  const changesMemoryKey = gitDirectory ? `changes:${getRuntimeKey()}:${gitDirectory}` : null;
 
   const stagedChangeEntries = React.useMemo(
     () => changeEntries.filter(isStagedStatusFile),
@@ -1521,6 +1476,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     worktreeMetadata?.createdFromBranch,
   ]);
   const baseBranch = useBranchPullRequestBase(gitDirectory ?? null, currentBranch, isActive, binding, branches, derivedBaseBranch);
+  const defaultTargetBranch = baseBranch || currentBranch || 'HEAD';
   useBranchPullRequestRequest(isActive ? gitDirectory ?? null : null, isActive ? currentBranch : null, binding);
 
   const updateTargetBranch = React.useMemo(() => {
@@ -2447,6 +2403,8 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                           revertingPaths={revertingPaths}
                           isRevertingAll={isRevertingAll}
                           onVisiblePathsChange={setVisibleChangePaths}
+                          memoryKey={changesMemoryKey}
+                          memoryReady={changeEntries.length > 0}
                           onRevertAll={handleRevertAll}
                           onRevertDirectory={handleRevertDirectory}
                           headerBackgroundClassName="bg-background"

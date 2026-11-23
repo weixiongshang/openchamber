@@ -121,7 +121,9 @@ the user can want independently:
   Mode, like render: the chat draws the images in place of the call's row from
   its stored result, which an `execute` script would hide.
 - `openchamber_secret` — `secret.run`, `secret.request` and `secret.forget`.
-  `secret.run` asks OpenCode's shell permission for its command line in the
+  Its description and parameters live in `secret-tool.ts`, under names of
+  their own, since `label` means something else in the web tool. `secret.run`
+  asks OpenCode's shell permission for its command line in the
   plugin, before the call reaches the server: `ctx.permission.assert` with
   action `shell`, the line `secretRunCommandLine` draws as the resource and
   `<program> *` as the pattern to save, so the session's shell rules apply as
@@ -134,7 +136,8 @@ the user can want independently:
   reported, so no payload field can reach another session's remembered values.
   `secret.request` is a
   card where the user types one secret the agent asked for (`label`, `reason`,
-  optional `placeholder`). Both wait, with the same plugin machinery as a page
+  optional `placeholder`). Both wait, and so does a `secret.forget` with
+  `saved: true`, which the user confirms on a card, with the same plugin machinery as a page
   with `awaitAnswer` (call id, `timeout: false`, the `session.prompt` hook
   that ends the wait when the user writes in the chat and leaves it running
   for an agent's or a queued prompt, the inbox events for the user's prompt
@@ -170,6 +173,18 @@ the user can want independently:
   control route refuses `terminal.*`. VS Code has no such tool, since the
   plugin is not injected there. It sits behind Code Mode like usage, and its catalog line says to
   read it when the answer is in a terminal the user is looking at.
+- `openchamber_actions` — `actions.list`, `actions.run`, `actions.logs` and
+  `actions.stop`, the project's actions the actions menu runs
+  (`../openchamber-control/project-actions.js`). Off by default: enabled only
+  while `agentActionsToolEnabled` is `true`, and the actions read the setting
+  on every call and refuse while it is not. The runtime builds that module from
+  its `projectActions` dependency and calls it itself, outside the control
+  service. A run is the same command terminal the menu starts, marked with the
+  session OpenCode reported, so the actions take that session like secrets do
+  and never a payload's `contextSessionId`. Its description and inputs live in
+  `actions-tool.ts`.
+  Behind Code Mode; the session context tells an agent about the tool only in a
+  project that has actions (`../session-knowledge/`).
 - `openchamber_workflow` — `workflow.*`, scripts that fan a large task out to
   many agents, run by OpenChamber (`../workflows/DOCUMENTATION.md`). Off by
   default: enabled only while `agentWorkflowToolEnabled` is `true`, and the
@@ -279,7 +294,13 @@ metadata and failure handling identical, which is what the caller depends on.
    authenticated HTTP adapter, so Goal Mode ordering, CLI wait behavior,
    result delivery, partial-failure reporting, and scheduled-task contracts
    have one owner.
-6. Each action definition owns a short presentation title and a separate
+6. While the `openchamber` tool is on, the plugin also hooks OpenCode's
+   `compaction` and asks `POST /api/openchamber/agent-tool/lead-compaction`
+   (same address and token, route in `../session-lead/server.js`) whether this
+   compaction is a lead's sleep compaction. A summary in the answer becomes the
+   compaction's result and OpenCode makes no model call; no summary, or any
+   failure to ask, leaves the compaction to the model.
+7. Each action definition owns a short presentation title and a separate
    agent-facing description. The generated schema uses the description to state
    required inputs or one non-obvious behavior, while completed calls use the
    short title in native tool metadata.
@@ -434,6 +455,16 @@ one namespace line in the catalog, and the catalog line says when to read it —
 the answer is in a terminal the user is looking at — so an agent does not
 sample the panel on every task.
 
+### Why project actions are their own tool, off by default
+
+Running an action starts a process on the user's machine, often a server that
+binds a port, so it is a trade the user switches on, the same as the terminal
+reader; inside `openchamber` it would arrive with a tool that is on by default.
+A run the agent starts belongs to the agent: the user's own run of that action
+is never replaced or stopped, a run call while it goes answers with whose run
+it is, and `actions.stop` refuses any run another session or the user started.
+The rules sit in the service, so the description only states them.
+
 ## Security invariants
 
 - The callback accepts same-machine requests only and requires the current
@@ -462,10 +493,13 @@ sample the panel on every task.
   tool cannot delete.
 - A cancelled turn aborts the session's in-flight actions. OpenCode 2 gives a
   plugin tool no abort signal and the plugin's request stays open, so the
-  server tracks in-flight actions per session and `abortSession(sessionID)` is
-  called from the event dispatch in `server/index.js` when the stream reports
-  `session.idle` with `aborted: true`; the abort signal then reaches the
-  shared service as before. A dropped HTTP request still aborts as well.
+  server tracks in-flight actions per session and the event dispatch in
+  `server/runtime.ts` hands every session event to `processSessionEvent`, which
+  aborts them when the stream reports `session.idle` with `aborted: true`; the
+  abort signal then reaches the shared service as before. A dropped HTTP request
+  still aborts as well. The same function releases a session's answer waits on
+  `session.idle` and `session.error`, and stops its project action runs on
+  `session.archived` and `session.deleted`.
 - A call the user stops ends as a stopped call: when `context.signal` has
   aborted, the generated `execute` rethrows instead of returning an `ok:false`
   envelope. Since OpenCode 2.3.0 a tool that reads its signal stops

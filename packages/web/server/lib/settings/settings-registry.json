@@ -34,6 +34,9 @@
     "opencodeBinary": {
       "scope": "instance"
     },
+    "useGlobalOpenCodeService": {
+      "scope": "instance"
+    },
     "serverUpdateChannel": {
       "scope": "instance",
       "surfaces": [
@@ -186,6 +189,9 @@
     "agentTerminalToolEnabled": {
       "scope": "instance"
     },
+    "agentActionsToolEnabled": {
+      "scope": "instance"
+    },
     "agentImageToolEnabled": {
       "scope": "instance"
     },
@@ -214,6 +220,9 @@
       "scope": "instance"
     },
     "agentWorkflowAutoApprove": {
+      "scope": "instance"
+    },
+    "agentWorkflowAutoApproveLeads": {
       "scope": "instance"
     },
     "isolatedSpacesEnabled": {
@@ -296,6 +305,9 @@
       "scope": "instance"
     },
     "sttLanguage": {
+      "scope": "profile"
+    },
+    "sttPrompt": {
       "scope": "profile"
     },
     "sttCorrectTranscript": {
@@ -397,6 +409,12 @@
     "sidebarHiddenSections": {
       "scope": "profile",
       "perSurface": true
+    },
+    "sidebarPageOrder": {
+      "scope": "profile"
+    },
+    "sidebarHiddenPages": {
+      "scope": "profile"
     },
     "workStatusSectionOrder": {
       "scope": "profile"
@@ -623,6 +641,9 @@
     "largeTextPasteBehavior": {
       "scope": "profile"
     },
+    "documentAttachBehavior": {
+      "scope": "profile"
+    },
     "savePastedImagesAsFiles": {
       "scope": "profile"
     },
@@ -699,6 +720,15 @@
       "scope": "profile"
     },
     "defaultAgent": {
+      "scope": "profile"
+    },
+    "chatsDefaultModel": {
+      "scope": "profile"
+    },
+    "chatsDefaultVariant": {
+      "scope": "profile"
+    },
+    "chatsDefaultAgent": {
       "scope": "profile"
     },
     "smallModelUseDefault": {

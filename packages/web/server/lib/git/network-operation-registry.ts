@@ -109,7 +109,7 @@ const ERROR_CODES = new Set([
   'INVALID_REQUEST', 'NOT_FOUND', 'STALE_REPOSITORY', 'STALE_BINDING', 'STALE_CONFIG',
   'REMOTE_CHANGED', 'AUTHENTICATION_REQUIRED', 'AUTHENTICATION_FAILED', 'TRANSPORT_FAILED',
   'CONFLICT', 'CANCELLED', 'TIMEOUT', 'OUTCOME_UNKNOWN', 'RUNTIME_UNSUPPORTED', 'UNKNOWN',
-  'GIT_LFS_CLIENT_MISSING', 'CHECKOUT_TOO_LARGE',
+  'GIT_LFS_CLIENT_MISSING', 'CHECKOUT_TOO_LARGE', 'SUBMODULE_SOURCE_LOCAL', 'LFS_SOURCE_LOCAL',
 ]);
 const FAILURE_ERROR_CODES = new Set([
   'INVALID_REQUEST', 'AUTHENTICATION_REQUIRED', 'AUTHENTICATION_FAILED', 'TRANSPORT_FAILED',
@@ -158,7 +158,7 @@ function isHydrationPart(value: unknown, pathRequired: boolean): value is Omit<S
       ? value.error === undefined
       : value.error !== undefined);
 }
-const expectedHydrationStatus = (parts: StoredHydrationPart[]) => {
+export const expectedHydrationStatus = (parts: readonly { status: string }[]) => {
   const statuses = parts.map((entry) => entry.status);
   if (!statuses.length || statuses.every((status) => status === 'not-needed')) return 'not-needed';
   for (const status of ['cancelled', 'invalid', 'client-missing', 'authorization-required', 'failed']) {
@@ -197,7 +197,7 @@ const isSafeDisplayEndpoint = (value: unknown): value is string => {
     return false;
   }
 };
-const isRelativeCheckoutPath = (value: unknown): value is string => isBoundedString(value, 4096)
+export const isRelativeCheckoutPath = (value: unknown): value is string => isBoundedString(value, 4096)
   && /^[\x20-\x7e\u0080-\uffff]*$/.test(value)
   && value !== '..' && !value.startsWith('../') && !value.includes('/../')
   && !value.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(value) && !value.includes('\\');

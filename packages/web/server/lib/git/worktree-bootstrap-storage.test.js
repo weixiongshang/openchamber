@@ -214,6 +214,9 @@ describe('worktree bootstrap storage', () => {
     expect(encoded).not.toContain('git@example.com');
     expect(encoded).not.toContain('token_secret');
     expect(encoded).not.toContain('process output');
+    await expect(createWorktreeBootstrapStore({ filePath }).read(directory)).resolves.toMatchObject({
+      hydration: { submodules: [{ path: 'vendor/module', error: { message: 'Worktree checkout hydration failed' } }] },
+    });
   });
 
   it('round-trips a checkout with too many files to inspect with its own public message', async () => {
@@ -256,7 +259,7 @@ describe('worktree bootstrap storage', () => {
     expect(result).toMatchObject({
       status: 'failed',
       phase: 'git-ready',
-      errorCode: 'UNKNOWN',
+      errorCode: 'OUTCOME_UNKNOWN',
       error: expect.stringContaining('repair'),
     });
     await expect(store.read(worktree)).resolves.toEqual(result);
